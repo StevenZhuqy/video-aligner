@@ -5,6 +5,8 @@
 .vscode
 venv/
 env/
+results/
+*.log
 
 # Icon must end with two \r
 Icon
