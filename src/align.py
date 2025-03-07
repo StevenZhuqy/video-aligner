@@ -23,7 +23,7 @@ def compute_match_count(frame1, frame2, sift, flann, ratio_thresh=0.7):
     return len(good_matches)
 
 
-def find_last_good_time(video_path, ref_frame, start_time, end_time, step, delta_threshold, sift, flann):
+def find_last_good_time(video_path, ref_frame, start_time, end_time, step, delta_threshold, sift, flann, use_fps=True):
     """
     Scan video from start_time to end_time (in seconds), comparing each frame with the ref_frame.
     Returns the last time (in seconds) where the drop in good matches from the previous frame is NOT over delta_threshold.
@@ -32,6 +32,8 @@ def find_last_good_time(video_path, ref_frame, start_time, end_time, step, delta
     fps = cap.get(cv2.CAP_PROP_FPS)
     last_good = start_time
     prev_match_count = None
+    if use_fps:
+        step = 1.0 / fps
 
     print(f"\nScanning {video_path} from {start_time}s to {end_time}s ...")
     t = start_time
@@ -56,7 +58,7 @@ def find_last_good_time(video_path, ref_frame, start_time, end_time, step, delta
     return last_good
 
 
-def align_pointers(video1_path, video2_path, delta_threshold=25, step=0.5, window=10):
+def align_pointers(video1_path, video2_path, delta_threshold=25, step=0.5, window=10, use_fps=True):
     """
     Two-phase alignment using a drop threshold:
       Phase 1: Use video2's frame at time 0 as a reference and scan video1 (0..window seconds)
@@ -79,7 +81,7 @@ def align_pointers(video1_path, video2_path, delta_threshold=25, step=0.5, windo
     
     print("Phase 1: Using Video2's frame at 0s as reference to scan Video1.")
     video1_trim = find_last_good_time(video1_path, ref_frame2, start_time=0, end_time=window, 
-                                      step=step, delta_threshold=delta_threshold, sift=sift, flann=flann)
+                                      step=step, delta_threshold=delta_threshold, sift=sift, flann=flann, use_fps=use_fps)
     print(f"Determined Video1 trim time: {video1_trim}s")
     
     # --- Phase 2: Align Video2 using Video1's frame at the trim time as reference ---
@@ -94,7 +96,7 @@ def align_pointers(video1_path, video2_path, delta_threshold=25, step=0.5, windo
     
     print("Phase 2: Using Video1's frame at the trim time as reference to scan Video2.")
     video2_trim = find_last_good_time(video2_path, ref_frame1, start_time=0, end_time=window, 
-                                      step=step, delta_threshold=delta_threshold, sift=sift, flann=flann)
+                                      step=step, delta_threshold=delta_threshold, sift=sift, flann=flann, use_fps=use_fps)
     print(f"Determined Video2 trim time: {video2_trim}s")
     
     return video1_trim, video2_trim
@@ -115,7 +117,7 @@ def trim_videos(video1_path, video2_path, trim1, trim2, output_dir):
 
 def align_videos(video1_path, video2_path, output_dir="aligned"):
     # Determine trim times using our two-phase alignment
-    video1_trim, video2_trim = align_pointers(video1_path, video2_path)
+    video1_trim, video2_trim = align_pointers(video1_path, video2_path, delta_threshold=100, step=0.05, window=20, use_fps=True)
     
     if video1_trim is None or video2_trim is None:
         print("Failed to determine proper trim times.")
