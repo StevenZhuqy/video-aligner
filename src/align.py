@@ -51,7 +51,7 @@ def find_last_good_time(video_path, ref_frame, start_time, end_time, step, delta
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     last_good = start_time
-    prev_match_count = None
+    highest_match = 0
     if use_fps:
         step = 1.0 / fps
 
@@ -67,19 +67,18 @@ def find_last_good_time(video_path, ref_frame, start_time, end_time, step, delta
         current_match_count = compute_match_count(frame, ref_frame, detector, matcher)
         print(f"Time {t:.1f}s: {current_match_count} good matches")
         
-        if prev_match_count is not None:
-            # If the drop compared to the previous frame is over the threshold, break.
-            if (prev_match_count - current_match_count) > delta_threshold:
-                break
-        # Update last good time and previous count
+        if current_match_count > highest_match:
+            highest_match = current_match_count
+        elif (highest_match - current_match_count) > delta_threshold:
+            break
+        
         last_good = t
-        prev_match_count = current_match_count
         t += step
     cap.release()
     return last_good
 
 
-def align_pointers(video1_path, video2_path, delta_threshold=25, step=0.1, window=20, use_fps=True, feature="sift"):
+def align_pointers(video1_path, video2_path, delta_threshold=50, step=0.1, window=20, use_fps=True, feature="sift"):
     """
     Two-phase alignment using a drop threshold:
       Phase 1: Use video2's frame at time 0 as a reference and scan video1 (0..window seconds)
@@ -105,6 +104,8 @@ def align_pointers(video1_path, video2_path, delta_threshold=25, step=0.1, windo
     print(f"Determined Video1 trim time: {video1_trim}s")
     
     # --- Phase 2: Align Video2 using Video1's frame at the trim time as reference ---
+    delta_threshold//=2 # Reduce threshold for second phase
+    print(f"Reduced delta threshold for Phase 2: {delta_threshold}")
     cap1 = cv2.VideoCapture(video1_path)
     fps1 = cap1.get(cv2.CAP_PROP_FPS)
     cap1.set(cv2.CAP_PROP_POS_FRAMES, int(video1_trim * fps1))
@@ -137,7 +138,7 @@ def trim_videos(video1_path, video2_path, trim1, trim2, output_dir):
 
 def align_videos(video1_path, video2_path, output_dir="aligned", feature="sift"):
     # Determine trim times using our two-phase alignment
-    video1_trim, video2_trim = align_pointers(video1_path, video2_path, delta_threshold=40, step=0.1,
+    video1_trim, video2_trim = align_pointers(video1_path, video2_path, delta_threshold=50, step=0.1,
                                               window=20, use_fps=True, feature=feature)
     
     if video1_trim is None or video2_trim is None:
