@@ -1,6 +1,6 @@
 # Video Aligner
 
-Align two videos of the same event recorded with different start times. This tool uses SIFT matching to detect the exact moment when each video changes content. The detected trim points are ideal for later processing or fine-tuning with a large vision model.
+Align two videos of the same event recorded with different start times. This tool uses feature matching (SIFT or ORB) to detect the exact moment when each video changes content. The detected trim points are ideal for later processing or fine-tuning with a large vision model.
 
 ## Install
 
@@ -25,17 +25,18 @@ Align two videos of the same event recorded with different start times. This too
 ## Usage
 
 ```bash
-python3 src/align.py data/video1.mp4 data/video2.mp4 -o output_directory
+python3 src/align.py data/video1.mp4 data/video2.mp4 -o output_directory -f "sift", "orb"
 ```
 
 - **video1.mp4:** Ideally the one that starts earlier
 - **video2.mp4:** Ideally the one that starts later
 - **output_directory:** Directory where the aligned videos will be saved.
+- **feature:** Feature detector to use: options are sift (default) or orb.
 
 ## How It Works
 
-- **SIFT Matching:**\
-Extracts SIFT features from frames and uses a FLANN-based matcher to compare them.
+- **Feature Matching:**\
+Extracts features from video frames using either SIFT (with a FLANN-based matcher) or ORB (with a BFMatcher using Hamming distance). You can select the desired method using the --feature (or -f) option.
 
 - **Delta Threshold:**\
-Scans through a time window with a step (you can change this in the code as you want) and detects a drop (you can change the drop threshold in the code as you want) in matches to determine the trim point.
+Scans through a time window with a configurable step and records the highest match count seen so far. If a subsequent frame drops more than the specified delta threshold in match count compared to the highest recorded value, the last frame is marked as the trim point.
