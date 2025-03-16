@@ -5,25 +5,45 @@ from tqdm import tqdm
 import argparse
 import os
 
-def compute_match_count(frame1, frame2, sift, flann, ratio_thresh=0.7):
+def create_feature_detector(feature):
+    """
+    Create the feature detector and matcher based on the specified feature type.
+    """
+    if feature.lower() == "sift":
+        detector = cv2.SIFT_create()
+        matcher = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=50))
+    elif feature.lower() == "orb":
+        detector = cv2.ORB_create()
+        matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+    else:
+        raise ValueError("Unsupported feature type. Use 'sift' or 'orb'.")
+    return detector, matcher
+
+
+def compute_match_count(frame1, frame2, detector, matcher, ratio_thresh=0.7):
     """
     Compute the number of good SIFT matches between two frames.
     """
     gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
     gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
     
-    kp1, des1 = sift.detectAndCompute(gray1, None)
-    kp2, des2 = sift.detectAndCompute(gray2, None)
+    kp1, des1 = detector.detectAndCompute(gray1, None)
+    kp2, des2 = detector.detectAndCompute(gray2, None)
     
     if des1 is None or des2 is None:
         return 0
     
-    raw_matches = flann.knnMatch(des1, des2, k=2)
-    good_matches = [m for m, n in raw_matches if m.distance < ratio_thresh * n.distance]
-    return len(good_matches)
+    if isinstance(detector, cv2.ORB.__class__) or detector.__class__.__name__.lower() == "orb":
+        matches = matcher.match(des1, des2)
+        good_matches = [m for m in matches if m.distance < 60]
+        return len(good_matches)
+    else:
+        raw_matches = matcher.knnMatch(des1, des2, k=2)
+        good_matches = [m1 for m1, m2 in raw_matches if m1.distance < ratio_thresh * m2.distance]
+        return len(good_matches)
 
 
-def find_last_good_time(video_path, ref_frame, start_time, end_time, step, delta_threshold, sift, flann, use_fps=True):
+def find_last_good_time(video_path, ref_frame, start_time, end_time, step, delta_threshold, detector, matcher, use_fps=True):
     """
     Scan video from start_time to end_time (in seconds), comparing each frame with the ref_frame.
     Returns the last time (in seconds) where the drop in good matches from the previous frame is NOT over delta_threshold.
@@ -35,6 +55,7 @@ def find_last_good_time(video_path, ref_frame, start_time, end_time, step, delta
     if use_fps:
         step = 1.0 / fps
 
+    print(f'step: {step:.2f}s')
     print(f"\nScanning {video_path} from {start_time}s to {end_time}s ...")
     t = start_time
     while t <= end_time:
@@ -43,7 +64,7 @@ def find_last_good_time(video_path, ref_frame, start_time, end_time, step, delta
         if not ret:
             break
         
-        current_match_count = compute_match_count(frame, ref_frame, sift, flann)
+        current_match_count = compute_match_count(frame, ref_frame, detector, matcher)
         print(f"Time {t:.1f}s: {current_match_count} good matches")
         
         if prev_match_count is not None:
@@ -58,7 +79,7 @@ def find_last_good_time(video_path, ref_frame, start_time, end_time, step, delta
     return last_good
 
 
-def align_pointers(video1_path, video2_path, delta_threshold=25, step=0.5, window=10, use_fps=True):
+def align_pointers(video1_path, video2_path, delta_threshold=25, step=0.1, window=20, use_fps=True, feature="sift"):
     """
     Two-phase alignment using a drop threshold:
       Phase 1: Use video2's frame at time 0 as a reference and scan video1 (0..window seconds)
@@ -66,9 +87,8 @@ def align_pointers(video1_path, video2_path, delta_threshold=25, step=0.5, windo
       Phase 2: Use video1's frame at the determined trim time as reference and scan video2 (0..window seconds)
                to determine its trim time using the same criteria.
     """
-    # Create SIFT detector and FLANN matcher
-    sift = cv2.SIFT_create()
-    flann = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=50))
+    # Create detector and corresponding matcher
+    detector, matcher = create_feature_detector(feature)
     
     # --- Phase 1: Align Video1 using Video2's initial frame as reference ---
     cap2 = cv2.VideoCapture(video2_path)
@@ -81,7 +101,7 @@ def align_pointers(video1_path, video2_path, delta_threshold=25, step=0.5, windo
     
     print("Phase 1: Using Video2's frame at 0s as reference to scan Video1.")
     video1_trim = find_last_good_time(video1_path, ref_frame2, start_time=0, end_time=window, 
-                                      step=step, delta_threshold=delta_threshold, sift=sift, flann=flann, use_fps=use_fps)
+                                      step=step, delta_threshold=delta_threshold, detector=detector, matcher=matcher, use_fps=use_fps)
     print(f"Determined Video1 trim time: {video1_trim}s")
     
     # --- Phase 2: Align Video2 using Video1's frame at the trim time as reference ---
@@ -96,7 +116,7 @@ def align_pointers(video1_path, video2_path, delta_threshold=25, step=0.5, windo
     
     print("Phase 2: Using Video1's frame at the trim time as reference to scan Video2.")
     video2_trim = find_last_good_time(video2_path, ref_frame1, start_time=0, end_time=window, 
-                                      step=step, delta_threshold=delta_threshold, sift=sift, flann=flann, use_fps=use_fps)
+                                      step=step, delta_threshold=delta_threshold, detector=detector, matcher=matcher, use_fps=use_fps)
     print(f"Determined Video2 trim time: {video2_trim}s")
     
     return video1_trim, video2_trim
@@ -115,9 +135,10 @@ def trim_videos(video1_path, video2_path, trim1, trim2, output_dir):
     clip2.write_videofile(output_path2)
 
 
-def align_videos(video1_path, video2_path, output_dir="aligned"):
+def align_videos(video1_path, video2_path, output_dir="aligned", feature="sift"):
     # Determine trim times using our two-phase alignment
-    video1_trim, video2_trim = align_pointers(video1_path, video2_path, delta_threshold=100, step=0.05, window=20, use_fps=True)
+    video1_trim, video2_trim = align_pointers(video1_path, video2_path, delta_threshold=40, step=0.1,
+                                              window=20, use_fps=True, feature=feature)
     
     if video1_trim is None or video2_trim is None:
         print("Failed to determine proper trim times.")
@@ -129,14 +150,15 @@ def align_videos(video1_path, video2_path, output_dir="aligned"):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Align two videos using SIFT')
+    parser = argparse.ArgumentParser(description='Align two videos using SIFT or ORB')
     parser.add_argument('video1', help='Path to the first video')
     parser.add_argument('video2', help='Path to the second video')
     parser.add_argument("-o", "--output", default="aligned", help="Output directory")
+    parser.add_argument("-f", "--feature", default="sift", choices=["sift", "orb"], help="Feature detection method (sift, orb)")
 
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True) # Create output directory if needed
 
-    align_videos(args.video1, args.video2, args.output)
+    align_videos(args.video1, args.video2, args.output, feature=args.feature)
     
